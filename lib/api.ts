@@ -99,6 +99,7 @@ export const appointmentsApi = {
   getAppointments: (params?: any) => apiClient.get(`/appointments?${new URLSearchParams(params)}`),
   bookAppointment: (data: any) => apiClient.post("/appointments", data),
   updateAppointmentStatus: (id: string, data: any) => apiClient.patch(`/appointments/${id}/status`, data),
+  getAppointmentById: (id: string) => apiClient.get(`/appointments/${id}`),
 }
 
 export const prescriptionsApi = {

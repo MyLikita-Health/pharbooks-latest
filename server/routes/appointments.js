@@ -9,7 +9,7 @@ const router = express.Router()
 router.get("/", authenticateToken, async (req, res) => {
   try {
     const { role, userId } = req.user
-    const { status, date, limit = 10, offset = 0 } = req.query
+    const { status, date, limit = 50, offset = 0 } = req.query
 
     const whereClause = {}
     const include = []
@@ -57,6 +57,41 @@ router.get("/", authenticateToken, async (req, res) => {
   } catch (error) {
     console.error("Get appointments error:", error)
     res.status(500).json({ message: "Failed to fetch appointments" })
+  }
+})
+
+// Get single appointment
+router.get("/:id", authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params
+    const { role, userId } = req.user
+
+    const whereClause = { id }
+    const include = [
+      { model: User, as: "Patient", attributes: ["id", "name", "phone", "email"] },
+      { model: User, as: "Doctor", attributes: ["id", "name", "specialization"] },
+    ]
+
+    // Authorization check
+    if (role === "patient") {
+      whereClause.patientId = userId
+    } else if (role === "doctor") {
+      whereClause.doctorId = userId
+    }
+
+    const appointment = await Appointment.findOne({
+      where: whereClause,
+      include,
+    })
+
+    if (!appointment) {
+      return res.status(404).json({ message: "Appointment not found" })
+    }
+
+    res.json({ appointment })
+  } catch (error) {
+    console.error("Get appointment error:", error)
+    res.status(500).json({ message: "Failed to fetch appointment" })
   }
 })
 
@@ -120,7 +155,7 @@ router.post("/", authenticateToken, authorizeRoles(["patient"]), validateAppoint
 router.patch("/:id/status", authenticateToken, async (req, res) => {
   try {
     const { id } = req.params
-    const { status, notes } = req.body
+    const { status, notes, diagnosis } = req.body
     const { role, userId } = req.user
 
     const appointment = await Appointment.findByPk(id)
@@ -139,6 +174,7 @@ router.patch("/:id/status", authenticateToken, async (req, res) => {
     // Update appointment
     const updateData = { status }
     if (notes) updateData.notes = notes
+    if (diagnosis) updateData.diagnosis = diagnosis
     if (status === "cancelled") {
       updateData.cancelledAt = new Date()
       updateData.cancelledBy = userId
@@ -146,9 +182,57 @@ router.patch("/:id/status", authenticateToken, async (req, res) => {
 
     await appointment.update(updateData)
 
+    // Fetch updated appointment with related data
+    const updatedAppointment = await Appointment.findByPk(id, {
+      include: [
+        { model: User, as: "Patient", attributes: ["id", "name", "phone"] },
+        { model: User, as: "Doctor", attributes: ["id", "name", "specialization"] },
+      ],
+    })
+
     res.json({
       message: "Appointment status updated successfully",
-      appointment,
+      appointment: updatedAppointment,
+    })
+  } catch (error) {
+    console.error("Update appointment error:", error)
+    res.status(500).json({ message: "Failed to update appointment" })
+  }
+})
+
+// Update appointment details (doctors only)
+router.patch("/:id", authenticateToken, authorizeRoles(["doctor"]), async (req, res) => {
+  try {
+    const { id } = req.params
+    const { diagnosis, notes, duration } = req.body
+    const { userId } = req.user
+
+    const appointment = await Appointment.findOne({
+      where: { id, doctorId: userId },
+    })
+
+    if (!appointment) {
+      return res.status(404).json({ message: "Appointment not found" })
+    }
+
+    const updateData = {}
+    if (diagnosis !== undefined) updateData.diagnosis = diagnosis
+    if (notes !== undefined) updateData.notes = notes
+    if (duration !== undefined) updateData.duration = duration
+
+    await appointment.update(updateData)
+
+    // Fetch updated appointment with related data
+    const updatedAppointment = await Appointment.findByPk(id, {
+      include: [
+        { model: User, as: "Patient", attributes: ["id", "name", "phone"] },
+        { model: User, as: "Doctor", attributes: ["id", "name", "specialization"] },
+      ],
+    })
+
+    res.json({
+      message: "Appointment updated successfully",
+      appointment: updatedAppointment,
     })
   } catch (error) {
     console.error("Update appointment error:", error)
