@@ -12,6 +12,7 @@ import { Calendar, Clock, Video, Search, User, Phone, Plus, Loader2 } from "luci
 import { useAuth } from "@/contexts/auth-context"
 import { useToast } from "@/hooks/use-toast"
 import { apiClient } from "@/lib/api"
+import NewAppointmentForm from "@/components/new-appointment-form"
 
 interface Appointment {
   id: string
@@ -44,13 +45,14 @@ export default function DoctorAppointments() {
     total: 0,
     confirmed: 0,
     pending: 0,
-    completed: 0
+    completed: 0,
   })
   const [loading, setLoading] = useState(true)
   const [searchTerm, setSearchTerm] = useState("")
   const [filterStatus, setFilterStatus] = useState("all")
   const [filterDate, setFilterDate] = useState("today")
   const [updating, setUpdating] = useState<string | null>(null)
+  const [showNewAppointmentForm, setShowNewAppointmentForm] = useState(false)
 
   const { user } = useAuth()
   const { toast } = useToast()
@@ -63,21 +65,21 @@ export default function DoctorAppointments() {
     try {
       setLoading(true)
       const params = new URLSearchParams()
-      
+
       if (filterStatus !== "all") {
         params.append("status", filterStatus)
       }
-      
+
       if (filterDate === "today") {
-        params.append("date", new Date().toISOString().split('T')[0])
+        params.append("date", new Date().toISOString().split("T")[0])
       }
-      
+
       params.append("limit", "50")
 
       const response = await apiClient.get(`/appointments?${params.toString()}`)
-      
+
       setAppointments(response.appointments || [])
-      
+
       // Calculate stats
       const appointmentList = response.appointments || []
       const newStats = {
@@ -87,7 +89,6 @@ export default function DoctorAppointments() {
         completed: appointmentList.filter((a: Appointment) => a.status === "completed").length,
       }
       setStats(newStats)
-      
     } catch (error) {
       console.error("Failed to fetch appointments:", error)
       toast({
@@ -103,10 +104,10 @@ export default function DoctorAppointments() {
   const updateAppointmentStatus = async (appointmentId: string, newStatus: string, notes?: string) => {
     try {
       setUpdating(appointmentId)
-      
+
       await apiClient.patch(`/appointments/${appointmentId}/status`, {
         status: newStatus,
-        notes
+        notes,
       })
 
       toast({
@@ -116,7 +117,6 @@ export default function DoctorAppointments() {
 
       // Refresh appointments
       fetchAppointments()
-      
     } catch (error) {
       console.error("Failed to update appointment:", error)
       toast({
@@ -164,7 +164,7 @@ export default function DoctorAppointments() {
 
   const formatTime = (dateString: string) => {
     const date = new Date(dateString)
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
   }
 
   const filteredAppointments = appointments.filter((appointment) => {
@@ -196,7 +196,7 @@ export default function DoctorAppointments() {
             <h1 className="text-3xl font-bold text-gray-900">My Appointments</h1>
             <p className="text-gray-600">Manage your patient appointments and consultations</p>
           </div>
-          <Button className="bg-blue-600 hover:bg-blue-700">
+          <Button className="bg-blue-600 hover:bg-blue-700" onClick={() => setShowNewAppointmentForm(true)}>
             <Plus className="w-4 h-4 mr-2" />
             New Appointment
           </Button>
@@ -337,9 +337,7 @@ export default function DoctorAppointments() {
                             <span className="text-sm text-gray-500">({appointment.Patient.phone})</span>
                           )}
                         </div>
-                        {appointment.symptoms && (
-                          <p className="text-gray-600">{appointment.symptoms}</p>
-                        )}
+                        {appointment.symptoms && <p className="text-gray-600">{appointment.symptoms}</p>}
                         {appointment.diagnosis && (
                           <p className="text-sm text-gray-500">Diagnosis: {appointment.diagnosis}</p>
                         )}
@@ -359,25 +357,21 @@ export default function DoctorAppointments() {
                     </div>
                     <div className="flex items-center space-x-3">
                       <Badge className={getStatusColor(appointment.status)}>
-                        {appointment.status.replace('_', ' ')}
+                        {appointment.status.replace("_", " ")}
                       </Badge>
                       <div className="flex space-x-2">
                         {appointment.status === "pending" && (
                           <>
-                            <Button 
-                              size="sm" 
+                            <Button
+                              size="sm"
                               className="bg-green-600 hover:bg-green-700"
                               onClick={() => updateAppointmentStatus(appointment.id, "confirmed")}
                               disabled={updating === appointment.id}
                             >
-                              {updating === appointment.id ? (
-                                <Loader2 className="w-4 h-4 animate-spin" />
-                              ) : (
-                                "Confirm"
-                              )}
+                              {updating === appointment.id ? <Loader2 className="w-4 h-4 animate-spin" /> : "Confirm"}
                             </Button>
-                            <Button 
-                              size="sm" 
+                            <Button
+                              size="sm"
                               variant="outline"
                               onClick={() => updateAppointmentStatus(appointment.id, "cancelled")}
                               disabled={updating === appointment.id}
@@ -394,8 +388,8 @@ export default function DoctorAppointments() {
                                 Start Call
                               </Button>
                             )}
-                            <Button 
-                              size="sm" 
+                            <Button
+                              size="sm"
                               variant="outline"
                               onClick={() => updateAppointmentStatus(appointment.id, "in_progress")}
                               disabled={updating === appointment.id}
@@ -405,8 +399,8 @@ export default function DoctorAppointments() {
                           </>
                         )}
                         {appointment.status === "in_progress" && (
-                          <Button 
-                            size="sm" 
+                          <Button
+                            size="sm"
                             className="bg-blue-600 hover:bg-blue-700"
                             onClick={() => updateAppointmentStatus(appointment.id, "completed")}
                             disabled={updating === appointment.id}
@@ -425,6 +419,20 @@ export default function DoctorAppointments() {
             ))
           )}
         </div>
+        {/* New Appointment Modal */}
+        {showNewAppointmentForm && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+            <div className="bg-white rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+              <NewAppointmentForm
+                onSuccess={() => {
+                  setShowNewAppointmentForm(false)
+                  fetchAppointments()
+                }}
+                onCancel={() => setShowNewAppointmentForm(false)}
+              />
+            </div>
+          </div>
+        )}
       </div>
     </DashboardLayout>
   )

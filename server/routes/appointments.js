@@ -95,7 +95,7 @@ router.get("/:id", authenticateToken, async (req, res) => {
   }
 })
 
-// Book appointment
+// Book appointment (for patients)
 router.post("/", authenticateToken, authorizeRoles(["patient"]), validateAppointment, async (req, res) => {
   try {
     const { doctorId, appointmentDate, type, symptoms, duration } = req.body
@@ -148,6 +148,70 @@ router.post("/", authenticateToken, authorizeRoles(["patient"]), validateAppoint
   } catch (error) {
     console.error("Book appointment error:", error)
     res.status(500).json({ message: "Failed to book appointment" })
+  }
+})
+
+// Create appointment (for doctors)
+router.post("/doctor-create", authenticateToken, authorizeRoles(["doctor"]), async (req, res) => {
+  try {
+    const { patientId, appointmentDate, type, symptoms, duration, notes, fee } = req.body
+    const doctorId = req.user.userId
+
+    // Validate required fields
+    if (!patientId || !appointmentDate) {
+      return res.status(400).json({ message: "Patient ID and appointment date are required" })
+    }
+
+    // Check if patient exists
+    const patient = await User.findOne({
+      where: { id: patientId, role: "patient" },
+    })
+
+    if (!patient) {
+      return res.status(404).json({ message: "Patient not found" })
+    }
+
+    // Check for scheduling conflicts
+    const conflictingAppointment = await Appointment.findOne({
+      where: {
+        doctorId,
+        appointmentDate: new Date(appointmentDate),
+        status: ["confirmed", "in_progress"],
+      },
+    })
+
+    if (conflictingAppointment) {
+      return res.status(409).json({ message: "Time slot not available" })
+    }
+
+    // Create appointment
+    const appointment = await Appointment.create({
+      patientId,
+      doctorId,
+      appointmentDate: new Date(appointmentDate),
+      type: type || "video",
+      symptoms,
+      notes,
+      duration: duration || 30,
+      fee: fee || 75.0,
+      status: "confirmed", // Doctor-created appointments are automatically confirmed
+    })
+
+    // Fetch appointment with related data
+    const createdAppointment = await Appointment.findByPk(appointment.id, {
+      include: [
+        { model: User, as: "Patient", attributes: ["id", "name", "phone", "email"] },
+        { model: User, as: "Doctor", attributes: ["id", "name", "specialization"] },
+      ],
+    })
+
+    res.status(201).json({
+      message: "Appointment created successfully",
+      appointment: createdAppointment,
+    })
+  } catch (error) {
+    console.error("Create appointment error:", error)
+    res.status(500).json({ message: "Failed to create appointment" })
   }
 })
 
