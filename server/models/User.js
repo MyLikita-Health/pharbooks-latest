@@ -12,11 +12,11 @@ module.exports = (sequelize) => {
       },
       email: {
         type: DataTypes.STRING,
-        allowNull: false,
-        unique: true,
-        validate: {
-          isEmail: true,
-        },
+        // allowNull: true,
+        // unique: true,
+        // validate: {
+        //   isEmail: true,
+        // },
       },
       password: {
         type: DataTypes.STRING,
@@ -47,9 +47,9 @@ module.exports = (sequelize) => {
       phone: {
         type: DataTypes.STRING,
         allowNull: true,
-        validate: {
-          is: /^[+]?[1-9][\d]{0,15}$/,
-        },
+        // validate: {
+        //   is: /^[+]?[1-9][\d]{0,15}$/,
+        // },
       },
       specialization: {
         type: DataTypes.STRING,
@@ -83,6 +83,14 @@ module.exports = (sequelize) => {
         type: DataTypes.DATE,
         allowNull: true,
       },
+      otp: {
+        type: DataTypes.STRING(4),
+        allowNull: true,
+      },
+      otpExpiresAt: {
+        type: DataTypes.DATE,
+        allowNull: true,
+      },
     },
     {
       hooks: {
@@ -101,7 +109,7 @@ module.exports = (sequelize) => {
           }
         },
       },
-      indexes: [{ fields: ["email"] }, { fields: ["role"] }, { fields: ["isApproved"] }, { fields: ["licenseNumber"] }],
+      indexes: [ { fields: ["role"] }, { fields: ["isApproved"] }, { fields: ["licenseNumber"] }],
     },
   )
 
