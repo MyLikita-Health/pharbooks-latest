@@ -3,6 +3,7 @@ const { body, validationResult } = require("express-validator")
 const handleValidationErrors = (req, res, next) => {
   const errors = validationResult(req)
   if (!errors.isEmpty()) {
+    console.error("Validation errors:", errors.array())
     return res.status(400).json({
       message: "Validation failed",
       errors: errors.array(),
@@ -12,7 +13,12 @@ const handleValidationErrors = (req, res, next) => {
 }
 
 const validateRegistration = [
-  body("email").isEmail().normalizeEmail().withMessage("Valid email is required"),
+  body("email")
+  .if(body("role").isIn(["doctor", "pharmacist"]))
+    // .if(body("email").exists())
+    .isEmail()
+    .normalizeEmail()
+    .withMessage("Valid email is required for healthcare professionals"),
   body("password").isLength({ min: 6 }).withMessage("Password must be at least 6 characters long"),
   body("name").trim().isLength({ min: 2, max: 100 }).withMessage("Name must be between 2 and 100 characters"),
   body("role").isIn(["patient", "doctor", "pharmacist"]).withMessage("Invalid role"),
@@ -25,7 +31,11 @@ const validateRegistration = [
 ]
 
 const validateLogin = [
-  body("email").isEmail().normalizeEmail().withMessage("Valid email is required"),
+  body("email")
+  .if(body("role").isIn(["doctor", "pharmacist"]))
+  .isEmail()
+  .normalizeEmail()
+  .withMessage("Valid email is required"),
   body("password").notEmpty().withMessage("Password is required"),
   handleValidationErrors,
 ]
