@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import DashboardLayout from "@/components/layout/dashboard-layout"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -8,45 +8,172 @@ import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Calendar, Clock, Video, Search, Plus } from "lucide-react"
+import { Calendar, Clock, Video, Search, Plus, Loader2, RefreshCw, AlertCircle, Copy } from "lucide-react"
 import Link from "next/link"
+import { useToast } from "@/hooks/use-toast"
+import { apiClient } from "@/lib/api"
+import { VideoCallProvider, useVideoCallContext } from "@/components/video-call-provider"
+import type { CallParticipant } from "@/lib/signaling-service"
+import { useAuth } from "@/contexts/auth-context"
 
-export default function PatientAppointments() {
+// Define the Appointment type
+interface Appointment {
+  id: number
+  doctor: string
+  specialization: string
+  date: string
+  time: string
+  type: string
+  status: string
+  symptoms: string
+  meetingId?: string
+  meetingUrl?: string
+}
+
+function PatientAppointmentsContent() {
   const [searchTerm, setSearchTerm] = useState("")
   const [filterStatus, setFilterStatus] = useState("all")
+  const [appointments, setAppointments] = useState<Appointment[]>([])
+  const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [isRefreshing, setIsRefreshing] = useState(false)
+  const { toast } = useToast()
+  const { initiateCall } = useVideoCallContext()
 
-  const appointments = [
-    {
-      id: 1,
-      doctor: "Dr. Sarah Smith",
-      specialization: "Cardiology",
-      date: "2024-01-15",
-      time: "10:00 AM",
-      type: "Video Consultation",
-      status: "confirmed",
-      symptoms: "Chest pain follow-up",
-    },
-    {
-      id: 2,
-      doctor: "Dr. Michael Johnson",
-      specialization: "General Medicine",
-      date: "2024-01-18",
-      time: "2:30 PM",
-      type: "Follow-up",
-      status: "pending",
-      symptoms: "Regular checkup",
-    },
-    {
-      id: 3,
-      doctor: "Dr. Emily Davis",
-      specialization: "Dermatology",
-      date: "2024-01-20",
-      time: "11:00 AM",
-      type: "Initial Consultation",
-      status: "confirmed",
-      symptoms: "Skin condition",
-    },
-  ]
+  // Fetch appointments from API
+  const fetchAppointments = async (showRefreshLoader = false) => {
+    try {
+      if (showRefreshLoader) {
+        setIsRefreshing(true)
+      } else {
+        setIsLoading(true)
+      }
+      setError(null)
+
+      const response = await apiClient.get("/appointments")
+
+      // Handle different possible response structures
+      const appointmentsData = response.data || response
+
+      if (Array.isArray(appointmentsData)) {
+        setAppointments(appointmentsData)
+      } else if (appointmentsData && Array.isArray(appointmentsData.appointments)) {
+        setAppointments(appointmentsData.appointments)
+      } else {
+        throw new Error("Invalid response format")
+      }
+    } catch (error) {
+      console.error("Error fetching appointments:", error)
+      setError("Failed to load appointments. Please try again.")
+
+      // Fallback to static data in case of error
+      const fallbackAppointments: Appointment[] = [
+        {
+          id: 1,
+          doctor: "Dr. Sarah Smith",
+          specialization: "Cardiology",
+          date: "2024-01-15",
+          time: "10:00 AM",
+          type: "Video Consultation",
+          status: "confirmed",
+          symptoms: "Chest pain follow-up",
+          meetingId: "abc123def456",
+          meetingUrl: "https://example.com/meeting/abc123def456",
+        },
+        {
+          id: 2,
+          doctor: "Dr. Michael Johnson",
+          specialization: "General Medicine",
+          date: "2024-01-18",
+          time: "2:30 PM",
+          type: "Follow-up",
+          status: "pending",
+          symptoms: "Regular checkup",
+        },
+        {
+          id: 3,
+          doctor: "Dr. Emily Davis",
+          specialization: "Dermatology",
+          date: "2024-01-20",
+          time: "11:00 AM",
+          type: "Initial Consultation",
+          status: "confirmed",
+          symptoms: "Skin condition",
+          meetingId: "xyz789uvw012",
+          meetingUrl: "https://example.com/meeting/xyz789uvw012",
+        },
+      ]
+      setAppointments(fallbackAppointments)
+
+      toast({
+        title: "Warning",
+        description: "Using cached appointment data. Some information may be outdated.",
+        variant: "destructive",
+      })
+    } finally {
+      setIsLoading(false)
+      setIsRefreshing(false)
+    }
+  }
+
+  // Update appointment status
+  const updateAppointmentStatus = async (appointmentId: number, newStatus: string) => {
+    try {
+      setIsRefreshing(true)
+
+      await apiClient.put(`/appointments/${appointmentId}`, {
+        status: newStatus,
+      })
+
+      // Update local state
+      setAppointments((prev) => prev.map((apt) => (apt.id === appointmentId ? { ...apt, status: newStatus } : apt)))
+
+      toast({
+        title: "Success",
+        description: `Appointment ${newStatus} successfully.`,
+      })
+    } catch (error) {
+      console.error("Error updating appointment:", error)
+      toast({
+        title: "Error",
+        description: "Failed to update appointment. Please try again.",
+        variant: "destructive",
+      })
+    } finally {
+      setIsRefreshing(false)
+    }
+  }
+
+  // Cancel appointment
+  const cancelAppointment = async (appointmentId: number) => {
+    try {
+      setIsRefreshing(true)
+
+      await apiClient.delete(`/appointments/${appointmentId}`)
+
+      // Remove from local state
+      setAppointments((prev) => prev.filter((apt) => apt.id !== appointmentId))
+
+      toast({
+        title: "Success",
+        description: "Appointment cancelled successfully.",
+      })
+    } catch (error) {
+      console.error("Error cancelling appointment:", error)
+      toast({
+        title: "Error",
+        description: "Failed to cancel appointment. Please try again.",
+        variant: "destructive",
+      })
+    } finally {
+      setIsRefreshing(false)
+    }
+  }
+
+  // Fetch appointments on component mount
+  useEffect(() => {
+    fetchAppointments()
+  }, [])
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -65,11 +192,62 @@ export default function PatientAppointments() {
 
   const filteredAppointments = appointments.filter((appointment) => {
     const matchesSearch =
-      appointment.doctor.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      appointment.specialization.toLowerCase().includes(searchTerm.toLowerCase())
+      (appointment.doctor?.toLowerCase() || "").includes(searchTerm.toLowerCase()) ||
+      (appointment.specialization?.toLowerCase() || "").includes(searchTerm.toLowerCase())
     const matchesFilter = filterStatus === "all" || appointment.status === filterStatus
     return matchesSearch && matchesFilter
   })
+
+  // Retry function for failed loading
+  const retryFetch = () => {
+    fetchAppointments()
+  }
+
+  // Refresh appointments
+  const refreshAppointments = () => {
+    fetchAppointments(true)
+  }
+
+  const startVideoCall = async (appointment: Appointment) => {
+    try {
+      const remoteParticipant: CallParticipant = {
+        id: appointment.id.toString(), // In real app, this would be doctor's user ID
+        name: appointment.doctor,
+        role: "doctor",
+        isOnline: true,
+      }
+
+      await initiateCall(appointment.id.toString(), remoteParticipant)
+    } catch (error) {
+      console.error("Failed to start video call:", error)
+      toast({
+        title: "Call Failed",
+        description: "Failed to join video call. Please try again.",
+        variant: "destructive",
+      })
+    }
+  }
+
+  const copyMeetingLink = (meetingUrl: string) => {
+    navigator.clipboard.writeText(meetingUrl)
+    toast({
+      title: "Meeting Link Copied",
+      description: "The meeting link has been copied to your clipboard.",
+    })
+  }
+
+  if (isLoading) {
+    return (
+      <DashboardLayout>
+        <div className="flex items-center justify-center h-64">
+          <div className="text-center">
+            <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4 text-blue-600" />
+            <p className="text-gray-600">Loading your appointments...</p>
+          </div>
+        </div>
+      </DashboardLayout>
+    )
+  }
 
   return (
     <DashboardLayout>
@@ -80,13 +258,41 @@ export default function PatientAppointments() {
             <h1 className="text-3xl font-bold text-gray-900">My Appointments</h1>
             <p className="text-gray-600">Manage your scheduled consultations</p>
           </div>
-          <Link href="/patient/appointments/book">
-            <Button className="bg-blue-600 hover:bg-blue-700 mt-4 sm:mt-0">
-              <Plus className="w-4 h-4 mr-2" />
-              Book Appointment
+          <div className="flex items-center space-x-2 mt-4 sm:mt-0">
+            <Button variant="outline" onClick={refreshAppointments} disabled={isRefreshing}>
+              <RefreshCw className={`w-4 h-4 mr-2 ${isRefreshing ? "animate-spin" : ""}`} />
+              Refresh
             </Button>
-          </Link>
+            <Link href="/patient/appointments/book">
+              <Button className="bg-blue-600 hover:bg-blue-700">
+                <Plus className="w-4 h-4 mr-2" />
+                Book Appointment
+              </Button>
+            </Link>
+          </div>
         </div>
+
+        {/* Error Display */}
+        {error && (
+          <Card className="border-red-200 bg-red-50">
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-2">
+                  <AlertCircle className="w-5 h-5 text-red-600" />
+                  <span className="text-red-800">{error}</span>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={retryFetch}
+                  className="text-red-600 border-red-300 bg-transparent"
+                >
+                  Retry
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Filters */}
         <Card>
@@ -152,19 +358,81 @@ export default function PatientAppointments() {
                           <span>{appointment.type}</span>
                         </div>
                       </div>
+                      {/* Meeting Link Display */}
+                      {appointment.meetingId && appointment.status === "confirmed" && (
+                        <div className="mt-2 p-2 bg-green-50 rounded-lg">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center space-x-2">
+                              <Video className="w-4 h-4 text-green-600" />
+                              <span className="text-sm text-green-800">Meeting ID: {appointment.meetingId}</span>
+                            </div>
+                            {appointment.meetingUrl && (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => copyMeetingLink(appointment.meetingUrl!)}
+                                className="text-green-600 hover:text-green-800"
+                              >
+                                <Copy className="w-4 h-4" />
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
                   <div className="flex items-center space-x-3">
                     <Badge className={getStatusColor(appointment.status)}>{appointment.status}</Badge>
                     {appointment.status === "confirmed" && (
-                      <Button size="sm" className="bg-green-600 hover:bg-green-700">
-                        <Video className="w-4 h-4 mr-1" />
-                        Join
-                      </Button>
+                      <div className="flex space-x-2">
+                        {appointment.meetingId ? (
+                          <Button
+                            size="sm"
+                            className="bg-green-600 hover:bg-green-700"
+                            onClick={() => startVideoCall(appointment)}
+                          >
+                            <Video className="w-4 h-4 mr-1" />
+                            Join
+                          </Button>
+                        ) : (
+                          <Button size="sm" variant="outline" disabled>
+                            <Video className="w-4 h-4 mr-1" />
+                            No Meeting Link
+                          </Button>
+                        )}
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => cancelAppointment(appointment.id)}
+                          disabled={isRefreshing}
+                        >
+                          Cancel
+                        </Button>
+                      </div>
                     )}
                     {appointment.status === "pending" && (
+                      <div className="flex space-x-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => updateAppointmentStatus(appointment.id, "confirmed")}
+                          disabled={isRefreshing}
+                        >
+                          Confirm
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => cancelAppointment(appointment.id)}
+                          disabled={isRefreshing}
+                        >
+                          Cancel
+                        </Button>
+                      </div>
+                    )}
+                    {appointment.status === "completed" && (
                       <Button size="sm" variant="outline">
-                        Reschedule
+                        View Details
                       </Button>
                     )}
                   </div>
@@ -174,6 +442,7 @@ export default function PatientAppointments() {
           ))}
         </div>
 
+        {/* Empty State */}
         {filteredAppointments.length === 0 && (
           <Card>
             <CardContent className="p-12 text-center">
@@ -193,7 +462,36 @@ export default function PatientAppointments() {
             </CardContent>
           </Card>
         )}
+
+        {/* Loading Overlay */}
+        {isRefreshing && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white p-6 rounded-lg shadow-lg">
+              <div className="flex items-center space-x-3">
+                <Loader2 className="w-6 h-6 animate-spin text-blue-600" />
+                <span className="text-gray-700">Updating appointments...</span>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </DashboardLayout>
+  )
+}
+
+export default function PatientAppointments() {
+  const { user } = useAuth()
+
+  const currentUser: CallParticipant = {
+    id: user?.id || "",
+    name: user?.name || "",
+    role: "patient",
+    isOnline: true,
+  }
+
+  return (
+    <VideoCallProvider currentUser={currentUser}>
+      <PatientAppointmentsContent />
+    </VideoCallProvider>
   )
 }

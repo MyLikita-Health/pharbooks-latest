@@ -5,7 +5,7 @@ const { Op } = require("sequelize")
 const router = express.Router()
 
 // Get all users (admin only)
-router.get("/", authenticateToken, authorizeRoles(["admin"]), async (req, res) => {
+router.get("/", authenticateToken, authorizeRoles(["admin","doctor","pharmacist","hub"]), async (req, res) => {
   try {
     const { role, status, search, limit = 10, offset = 0 } = req.query
 

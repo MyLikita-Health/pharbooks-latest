@@ -1,336 +1,316 @@
 const express = require("express")
-const router = express.Router()
-const { User, Appointment, Prescription, PharmacyOrder, Medication } = require("../models")
-const { authenticateToken } = require("../middleware/auth")
+const { User, Appointment, Prescription, Medication, Notification, PharmacyOrder, sequelize } = require("../models")
+const { authenticateToken, authorizeRoles } = require("../middleware/auth")
 const { Op } = require("sequelize")
+const router = express.Router()
 
-// Get dashboard data (role-specific)
-router.get("/stats", authenticateToken, async (req, res) => {
+// Doctor dashboard statistics
+router.get("/doctor/stats", authenticateToken, authorizeRoles(["doctor"]), async (req, res) => {
   try {
-    const userId = req.user.id
-    const userRole = req.user.role
+    const doctorId = req.user.userId
+    const today = new Date()
+    const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate())
+    const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1)
 
-    let dashboardData = {}
+    // Get total patients (unique patients who had appointments with this doctor)
+    const totalPatients = await Appointment.count({
+      where: { doctorId },
+      distinct: true,
+      col: "patientId",
+    })
 
-    switch (userRole) {
-      case "patient":
-        dashboardData = await getPatientDashboard(userId)
-        break
-      case "doctor":
-        dashboardData = await getDoctorDashboard(userId)
-        break
-      case "pharmacist":
-        dashboardData = await getPharmacistDashboard(userId)
-        break
-      case "admin":
-        dashboardData = await getAdminDashboard()
-        break
-      case "hub":
-        dashboardData = await getHubDashboard()
-        break
-      default:
-        return res.status(400).json({ error: "Invalid user role" })
-    }
+    // Get today's appointments
+    const todayAppointments = await Appointment.count({
+      where: {
+        doctorId,
+        appointmentDate: {
+          [Op.gte]: startOfDay,
+          [Op.lt]: endOfDay,
+        },
+      },
+    })
 
-    res.json(dashboardData)
+    // Get upcoming appointments
+    const upcomingAppointments = await Appointment.count({
+      where: {
+        doctorId,
+        appointmentDate: {
+          [Op.gt]: new Date(),
+        },
+        status: ["confirmed", "pending"],
+      },
+    })
+
+    // Get completed appointments
+    const completedAppointments = await Appointment.count({
+      where: {
+        doctorId,
+        status: "completed",
+      },
+    })
+
+    // Get active prescriptions
+    const activePrescriptions = await Prescription.count({
+      where: {
+        doctorId,
+        status: "active",
+      },
+    })
+
+    // Get total consultations
+    const totalConsultations = await Appointment.count({
+      where: {
+        doctorId,
+        status: "completed",
+      },
+    })
+
+    // Get unread messages
+    const unreadMessages = await Notification.count({
+      where: {
+        userId: doctorId,
+        isRead: false,
+        type: "message",
+      },
+    })
+
+    // Calculate rating (mock for now)
+    const rating = 4.8
+
+    // Calculate total earnings (mock for now)
+    const totalEarnings = completedAppointments * 75
+
+    res.json({
+      totalPatients,
+      todayAppointments,
+      upcomingAppointments,
+      completedAppointments,
+      activePrescriptions,
+      totalConsultations,
+      unreadMessages,
+      rating,
+      totalEarnings,
+    })
   } catch (error) {
-    console.error("Error fetching dashboard data:", error)
-    res.status(500).json({ error: "Failed to fetch dashboard data" })
+    console.error("Doctor stats error:", error)
+    res.status(500).json({ message: "Failed to fetch doctor statistics" })
   }
 })
 
-async function getPatientDashboard(userId) {
-  const today = new Date()
-  const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate())
-  const endOfDay = new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000)
+// Patient dashboard statistics
+router.get("/patient/stats", authenticateToken, authorizeRoles(["patient"]), async (req, res) => {
+  try {
+    const patientId = req.user.userId
 
-  const [
-    totalAppointments,
-    upcomingAppointments,
-    activePrescriptions,
-    pendingOrders,
-    recentAppointments,
-    recentPrescriptions,
-  ] = await Promise.all([
-    Appointment.count({ where: { patientId: userId } }),
-    Appointment.count({
+    // Get upcoming appointments
+    const upcomingAppointments = await Appointment.count({
       where: {
-        patientId: userId,
-        appointmentDate: { [Op.gte]: new Date() },
-        status: { [Op.in]: ["confirmed", "pending"] },
+        patientId,
+        appointmentDate: {
+          [Op.gt]: new Date(),
+        },
+        status: ["confirmed", "pending"],
       },
-    }),
-    Prescription.count({
-      where: { patientId: userId, status: "active" },
-    }),
-    PharmacyOrder.count({
-      where: { patientId: userId, status: { [Op.in]: ["pending", "processing"] } },
-    }),
-    Appointment.findAll({
-      where: { patientId: userId },
-      include: [
-        {
-          model: User,
-          as: "Doctor",
-          attributes: ["id", "name", "specialization"],
-        },
-      ],
-      order: [["appointmentDate", "DESC"]],
-      limit: 5,
-    }),
-    Prescription.findAll({
-      where: { patientId: userId },
-      include: [
-        {
-          model: Medication,
-          attributes: ["id", "name", "dosage"],
-        },
-        {
-          model: User,
-          as: "Doctor",
-          attributes: ["id", "name"],
-        },
-      ],
-      order: [["createdAt", "DESC"]],
-      limit: 5,
-    }),
-  ])
+    })
 
-  return {
-    stats: {
-      totalAppointments,
+    // Get active prescriptions
+    const activePrescriptions = await Prescription.count({
+      where: {
+        patientId,
+        status: "active",
+      },
+    })
+
+    // Get unread messages
+    const unreadMessages = await Notification.count({
+      where: {
+        userId: patientId,
+        isRead: false,
+      },
+    })
+
+    // Get total appointments
+    const totalAppointments = await Appointment.count({
+      where: { patientId },
+    })
+
+    // Get completed appointments
+    const completedAppointments = await Appointment.count({
+      where: {
+        patientId,
+        status: "completed",
+      },
+    })
+
+    // Calculate health score (mock for now)
+    const healthScore = 85
+
+    // Mock vital signs
+    const vitalSigns = {
+      bloodPressure: "120/80",
+      heartRate: "72 bpm",
+      temperature: "98.6°F",
+      weight: "165 lbs",
+      recordedAt: new Date().toISOString(),
+    }
+
+    res.json({
       upcomingAppointments,
       activePrescriptions,
-      pendingOrders,
-    },
-    recentActivity: {
-      appointments: recentAppointments,
-      prescriptions: recentPrescriptions,
-    },
-  }
-}
-
-async function getDoctorDashboard(userId) {
-  const today = new Date()
-  const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate())
-  const endOfDay = new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000)
-
-  const [
-    todayAppointments,
-    totalPatients,
-    activePrescriptions,
-    pendingAppointments,
-    todaySchedule,
-    recentPrescriptions,
-  ] = await Promise.all([
-    Appointment.count({
-      where: {
-        doctorId: userId,
-        appointmentDate: { [Op.between]: [startOfDay, endOfDay] },
-      },
-    }),
-    Appointment.count({
-      where: { doctorId: userId },
-      distinct: true,
-      col: "patientId",
-    }),
-    Prescription.count({
-      where: { doctorId: userId, status: "active" },
-    }),
-    Appointment.count({
-      where: { doctorId: userId, status: "pending" },
-    }),
-    Appointment.findAll({
-      where: {
-        doctorId: userId,
-        appointmentDate: { [Op.between]: [startOfDay, endOfDay] },
-      },
-      include: [
-        {
-          model: User,
-          as: "Patient",
-          attributes: ["id", "name", "phone"],
-        },
-      ],
-      order: [["appointmentDate", "ASC"]],
-    }),
-    Prescription.findAll({
-      where: { doctorId: userId },
-      include: [
-        {
-          model: User,
-          as: "Patient",
-          attributes: ["id", "name"],
-        },
-        {
-          model: Medication,
-          attributes: ["id", "name", "dosage"],
-        },
-      ],
-      order: [["createdAt", "DESC"]],
-      limit: 5,
-    }),
-  ])
-
-  return {
-    stats: {
-      todayAppointments,
-      totalPatients,
-      activePrescriptions,
-      pendingAppointments,
-    },
-    todaySchedule,
-    recentActivity: {
-      prescriptions: recentPrescriptions,
-    },
-  }
-}
-
-async function getPharmacistDashboard(userId) {
-  const [pendingPrescriptions, activeOrders, lowStockItems, totalInventory, recentOrders, inventoryAlerts] =
-    await Promise.all([
-      Prescription.count({
-        where: { pharmacistId: userId, status: "pending_verification" },
-      }),
-      PharmacyOrder.count({
-        where: { pharmacistId: userId, status: { [Op.in]: ["processing", "shipped"] } },
-      }),
-      Medication.count({
-        where: { currentStock: { [Op.lte]: { [Op.col]: "minStock" } } },
-      }),
-      Medication.count(),
-      PharmacyOrder.findAll({
-        where: { pharmacistId: userId },
-        include: [
-          {
-            model: User,
-            as: "Patient",
-            attributes: ["id", "name"],
-          },
-          {
-            model: Prescription,
-            include: [
-              {
-                model: Medication,
-                attributes: ["id", "name", "dosage"],
-              },
-            ],
-          },
-        ],
-        order: [["createdAt", "DESC"]],
-        limit: 5,
-      }),
-      Medication.findAll({
-        where: { currentStock: { [Op.lte]: { [Op.col]: "minStock" } } },
-        order: [["currentStock", "ASC"]],
-        limit: 5,
-      }),
-    ])
-
-  return {
-    stats: {
-      pendingPrescriptions,
-      activeOrders,
-      lowStockItems,
-      totalInventory,
-    },
-    recentActivity: {
-      orders: recentOrders,
-      inventoryAlerts,
-    },
-  }
-}
-
-async function getAdminDashboard() {
-  const [totalUsers, totalAppointments, totalPrescriptions, pendingApprovals, recentUsers, systemStats] =
-    await Promise.all([
-      User.count(),
-      Appointment.count(),
-      Prescription.count(),
-      User.count({ where: { status: "pending" } }),
-      User.findAll({
-        attributes: { exclude: ["password"] },
-        order: [["createdAt", "DESC"]],
-        limit: 5,
-      }),
-      Promise.all([
-        User.count({ where: { role: "patient" } }),
-        User.count({ where: { role: "doctor" } }),
-        User.count({ where: { role: "pharmacist" } }),
-        Appointment.count({ where: { status: "completed" } }),
-      ]),
-    ])
-
-  return {
-    stats: {
-      totalUsers,
+      unreadMessages,
       totalAppointments,
-      totalPrescriptions,
-      pendingApprovals,
-    },
-    systemStats: {
-      patients: systemStats[0],
-      doctors: systemStats[1],
-      pharmacists: systemStats[2],
-      completedAppointments: systemStats[3],
-    },
-    recentActivity: {
-      users: recentUsers,
-    },
+      completedAppointments,
+      healthScore,
+      vitalSigns,
+    })
+  } catch (error) {
+    console.error("Patient stats error:", error)
+    res.status(500).json({ message: "Failed to fetch patient statistics" })
   }
-}
+})
 
-async function getHubDashboard() {
-  const today = new Date()
-  const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate())
+// Admin dashboard statistics
+router.get("/admin/stats", authenticateToken, authorizeRoles(["admin"]), async (req, res) => {
+  try {
+    // Get user statistics
+    const totalUsers = await User.count()
+    const totalDoctors = await User.count({ where: { role: "doctor" } })
+    const totalPatients = await User.count({ where: { role: "patient" } })
+    const totalPharmacists = await User.count({ where: { role: "pharmacist" } })
+    const pendingApprovals = await User.count({ where: { isApproved: false, role: { [Op.ne]: "patient" } } })
 
-  const [todayAppointments, totalPatients, availableDoctors, pendingMatches, recentAppointments, patientStats] =
-    await Promise.all([
-      Appointment.count({
-        where: {
-          appointmentDate: { [Op.gte]: startOfDay },
+    // Get appointment statistics
+    const totalAppointments = await Appointment.count()
+    const todayAppointments = await Appointment.count({
+      where: {
+        appointmentDate: {
+          [Op.gte]: new Date(new Date().setHours(0, 0, 0, 0)),
+          [Op.lt]: new Date(new Date().setHours(23, 59, 59, 999)),
         },
-      }),
-      User.count({ where: { role: "patient" } }),
-      User.count({ where: { role: "doctor", status: "active" } }),
-      Appointment.count({ where: { status: "pending" } }),
-      Appointment.findAll({
-        include: [
-          {
-            model: User,
-            as: "Patient",
-            attributes: ["id", "name"],
-          },
-          {
-            model: User,
-            as: "Doctor",
-            attributes: ["id", "name", "specialization"],
-          },
-        ],
-        order: [["createdAt", "DESC"]],
-        limit: 5,
-      }),
-      Promise.all([
-        User.count({ where: { role: "patient", status: "active" } }),
-        User.count({ where: { role: "patient", createdAt: { [Op.gte]: startOfDay } } }),
-      ]),
-    ])
+      },
+    })
 
-  return {
-    stats: {
-      todayAppointments,
-      totalPatients,
-      availableDoctors,
-      pendingMatches,
-    },
-    patientStats: {
-      active: patientStats[0],
-      newToday: patientStats[1],
-    },
-    recentActivity: {
-      appointments: recentAppointments,
-    },
+    // Get prescription statistics
+    const totalPrescriptions = await Prescription.count()
+    const activePrescriptions = await Prescription.count({ where: { status: "active" } })
+
+    // Get revenue (mock calculation)
+    const totalRevenue = totalAppointments * 75
+
+    res.json({
+      users: {
+        total: totalUsers,
+        doctors: totalDoctors,
+        patients: totalPatients,
+        pharmacists: totalPharmacists,
+        pendingApprovals,
+      },
+      appointments: {
+        total: totalAppointments,
+        today: todayAppointments,
+      },
+      prescriptions: {
+        total: totalPrescriptions,
+        active: activePrescriptions,
+      },
+      revenue: {
+        total: totalRevenue,
+        monthly: Math.floor(totalRevenue / 12),
+      },
+    })
+  } catch (error) {
+    console.error("Admin stats error:", error)
+    res.status(500).json({ message: "Failed to fetch admin statistics" })
   }
-}
+})
+
+// Pharmacist dashboard statistics
+router.get("/pharmacist/stats", authenticateToken, authorizeRoles(["pharmacist"]), async (req, res) => {
+  try {
+    const pharmacistId = req.user.userId
+
+    // Get prescription statistics
+    const totalPrescriptions = await Prescription.count()
+    const pendingPrescriptions = await Prescription.count({ where: { status: "pending" } })
+    const filledPrescriptions = await Prescription.count({ where: { status: "filled" } })
+
+    // Get order statistics (mock for now)
+    const totalOrders = await PharmacyOrder.count()
+    const pendingOrders = await PharmacyOrder.count({ where: { status: "pending" } })
+    const completedOrders = await PharmacyOrder.count({ where: { status: "completed" } })
+
+    // Mock inventory statistics
+    const lowStockItems = 15
+    const totalInventoryValue = 125000
+
+    res.json({
+      prescriptions: {
+        total: totalPrescriptions,
+        pending: pendingPrescriptions,
+        filled: filledPrescriptions,
+      },
+      orders: {
+        total: totalOrders,
+        pending: pendingOrders,
+        completed: completedOrders,
+      },
+      inventory: {
+        lowStockItems,
+        totalValue: totalInventoryValue,
+      },
+    })
+  } catch (error) {
+    console.error("Pharmacist stats error:", error)
+    res.status(500).json({ message: "Failed to fetch pharmacist statistics" })
+  }
+})
+
+// Hub dashboard statistics
+router.get("/hub/stats", authenticateToken, authorizeRoles(["hub", "admin"]), async (req, res) => {
+  try {
+    // Get patient statistics
+    const totalPatients = await User.count({ where: { role: "patient" } })
+    const activePatients = await User.count({ where: { role: "patient", isActive: true } })
+    const newPatientsThisMonth = await User.count({
+      where: {
+        role: "patient",
+        createdAt: {
+          [Op.gte]: new Date(new Date().getFullYear(), new Date().getMonth(), 1),
+        },
+      },
+    })
+
+    // Get appointment statistics
+    const totalAppointments = await Appointment.count()
+    const pendingMatches = await Appointment.count({ where: { status: "pending" } })
+
+    // Get analytics data
+    const appointmentsByMonth = await Appointment.findAll({
+      attributes: [
+        [sequelize.fn("DATE_FORMAT", sequelize.col("appointmentDate"), "%Y-%m"), "month"],
+        [sequelize.fn("COUNT", sequelize.col("id")), "count"],
+      ],
+      group: [sequelize.fn("DATE_FORMAT", sequelize.col("appointmentDate"), "%Y-%m")],
+      order: [[sequelize.fn("DATE_FORMAT", sequelize.col("appointmentDate"), "%Y-%m"), "ASC"]],
+      limit: 12,
+    })
+
+    res.json({
+      patients: {
+        total: totalPatients,
+        active: activePatients,
+        newThisMonth: newPatientsThisMonth,
+        pendingMatches,
+      },
+      appointments: {
+        total: totalAppointments,
+        byMonth: appointmentsByMonth,
+      },
+    })
+  } catch (error) {
+    console.error("Hub stats error:", error)
+    res.status(500).json({ message: "Failed to fetch hub statistics" })
+  }
+})
 
 module.exports = router

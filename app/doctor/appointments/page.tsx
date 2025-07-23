@@ -8,11 +8,14 @@ import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Calendar, Clock, Video, Search, User, Phone, Plus, Loader2 } from "lucide-react"
+import { Calendar, Clock, Video, Search, User, Phone, Plus, Loader2, Copy } from "lucide-react"
 import { useAuth } from "@/contexts/auth-context"
 import { useToast } from "@/hooks/use-toast"
 import { apiClient } from "@/lib/api"
 import NewAppointmentForm from "@/components/new-appointment-form"
+import { VideoCallProvider, useVideoCallContext } from "@/components/video-call-provider"
+import type { CallParticipant } from "@/lib/signaling-service"
+import ConsultationDetailsView from "@/components/consultation-details-view"
 
 interface Appointment {
   id: string
@@ -25,11 +28,14 @@ interface Appointment {
   notes?: string
   fee: number
   paymentStatus: string
+  meetingId?: string
+  meetingUrl?: string
   Patient: {
     id: string
     name: string
     phone?: string
   }
+  consultationNotes?: string
 }
 
 interface AppointmentStats {
@@ -39,7 +45,7 @@ interface AppointmentStats {
   completed: number
 }
 
-export default function DoctorAppointments() {
+function DoctorAppointmentsContent() {
   const [appointments, setAppointments] = useState<Appointment[]>([])
   const [stats, setStats] = useState<AppointmentStats>({
     total: 0,
@@ -53,9 +59,12 @@ export default function DoctorAppointments() {
   const [filterDate, setFilterDate] = useState("today")
   const [updating, setUpdating] = useState<string | null>(null)
   const [showNewAppointmentForm, setShowNewAppointmentForm] = useState(false)
-
   const { user } = useAuth()
   const { toast } = useToast()
+  const { initiateCall } = useVideoCallContext()
+
+  const [selectedAppointment, setSelectedAppointment] = useState<Appointment | null>(null)
+  const [showConsultationDetails, setShowConsultationDetails] = useState(false)
 
   useEffect(() => {
     fetchAppointments()
@@ -173,6 +182,50 @@ export default function DoctorAppointments() {
       (appointment.symptoms && appointment.symptoms.toLowerCase().includes(searchTerm.toLowerCase()))
     return matchesSearch
   })
+
+  const startVideoCall = async (appointment: Appointment) => {
+    try {
+      const remoteParticipant: CallParticipant = {
+        id: appointment.Patient.id,
+        name: appointment.Patient.name,
+        role: "patient",
+        isOnline: true,
+      }
+
+      await initiateCall(appointment.id, remoteParticipant)
+    } catch (error) {
+      console.error("Failed to start video call:", error)
+      toast({
+        title: "Call Failed",
+        description: "Failed to initiate video call. Please try again.",
+        variant: "destructive",
+      })
+    }
+  }
+
+  const copyMeetingLink = (meetingUrl: string) => {
+    navigator.clipboard.writeText(meetingUrl)
+    toast({
+      title: "Meeting Link Copied",
+      description: "The meeting link has been copied to your clipboard.",
+    })
+  }
+
+  const viewConsultationDetails = async (appointment: Appointment) => {
+    try {
+      // Fetch detailed appointment data with consultation info
+      const response = await apiClient.get(`/appointments/${appointment.id}`)
+      setSelectedAppointment(response.appointment)
+      setShowConsultationDetails(true)
+    } catch (error) {
+      console.error("Failed to fetch consultation details:", error)
+      toast({
+        title: "Error",
+        description: "Failed to load consultation details.",
+        variant: "destructive",
+      })
+    }
+  }
 
   if (loading) {
     return (
@@ -353,6 +406,27 @@ export default function DoctorAppointments() {
                           <span>{appointment.duration} min</span>
                           <span className="capitalize">{appointment.type}</span>
                         </div>
+                        {/* Meeting Link Display */}
+                        {appointment.meetingId && appointment.status === "confirmed" && (
+                          <div className="mt-2 p-2 bg-blue-50 rounded-lg">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center space-x-2">
+                                <Video className="w-4 h-4 text-blue-600" />
+                                <span className="text-sm text-blue-800">Meeting ID: {appointment.meetingId}</span>
+                              </div>
+                              {appointment.meetingUrl && (
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() => copyMeetingLink(appointment.meetingUrl!)}
+                                  className="text-blue-600 hover:text-blue-800"
+                                >
+                                  <Copy className="w-4 h-4" />
+                                </Button>
+                              )}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>
                     <div className="flex items-center space-x-3">
@@ -382,8 +456,12 @@ export default function DoctorAppointments() {
                         )}
                         {appointment.status === "confirmed" && (
                           <>
-                            {appointment.type === "video" && (
-                              <Button size="sm" className="bg-green-600 hover:bg-green-700">
+                            {appointment.type === "video" && appointment.meetingId && (
+                              <Button
+                                size="sm"
+                                className="bg-green-600 hover:bg-green-700"
+                                onClick={() => startVideoCall(appointment)}
+                              >
                                 <Video className="w-4 h-4 mr-1" />
                                 Start Call
                               </Button>
@@ -408,9 +486,15 @@ export default function DoctorAppointments() {
                             Complete
                           </Button>
                         )}
-                        <Button size="sm" variant="outline">
-                          View Details
-                        </Button>
+                        {appointment.status === "completed" && appointment.consultationNotes ? (
+                          <Button size="sm" variant="outline" onClick={() => viewConsultationDetails(appointment)}>
+                            View Consultation
+                          </Button>
+                        ) : (
+                          <Button size="sm" variant="outline">
+                            View Details
+                          </Button>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -419,6 +503,7 @@ export default function DoctorAppointments() {
             ))
           )}
         </div>
+
         {/* New Appointment Modal */}
         {showNewAppointmentForm && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
@@ -433,7 +518,35 @@ export default function DoctorAppointments() {
             </div>
           </div>
         )}
+
+        {/* Consultation Details Modal */}
+        {showConsultationDetails && selectedAppointment && (
+          <ConsultationDetailsView
+            appointment={selectedAppointment}
+            onClose={() => {
+              setShowConsultationDetails(false)
+              setSelectedAppointment(null)
+            }}
+          />
+        )}
       </div>
     </DashboardLayout>
+  )
+}
+
+export default function DoctorAppointments() {
+  const { user } = useAuth()
+
+  const currentUser: CallParticipant = {
+    id: user?.id || "",
+    name: user?.name || "",
+    role: "doctor",
+    isOnline: true,
+  }
+
+  return (
+    <VideoCallProvider currentUser={currentUser}>
+      <DoctorAppointmentsContent />
+    </VideoCallProvider>
   )
 }

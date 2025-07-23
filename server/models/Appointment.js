@@ -59,7 +59,60 @@ module.exports = (sequelize) => {
         type: DataTypes.TEXT,
         allowNull: true,
       },
+      // Post-consultation fields
+      consultationNotes: {
+        type: DataTypes.TEXT,
+        allowNull: true,
+      },
+      urgency: {
+        type: DataTypes.ENUM("low", "medium", "high", "urgent"),
+        allowNull: true,
+        defaultValue: "medium",
+      },
+      specialInstructions: {
+        type: DataTypes.TEXT,
+        allowNull: true,
+      },
+      additionalNotes: {
+        type: DataTypes.TEXT,
+        allowNull: true,
+      },
+      followUpRequired: {
+        type: DataTypes.BOOLEAN,
+        allowNull: false,
+        defaultValue: false,
+      },
+      followUpDays: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+        validate: {
+          min: 1,
+          max: 365,
+        },
+      },
+      followUpDate: {
+        type: DataTypes.DATE,
+        allowNull: true,
+      },
+      consultationCompletedAt: {
+        type: DataTypes.DATE,
+        allowNull: true,
+      },
+      consultationDuration: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+        comment: "Duration in seconds",
+      },
       videoSessionId: {
+        type: DataTypes.STRING,
+        allowNull: true,
+      },
+      meetingId: {
+        type: DataTypes.STRING,
+        allowNull: true,
+        // unique: true,
+      },
+      meetingUrl: {
         type: DataTypes.STRING,
         allowNull: true,
       },
@@ -93,6 +146,10 @@ module.exports = (sequelize) => {
         { fields: ["appointmentDate"] },
         { fields: ["status"] },
         { fields: ["type"] },
+        { fields: ["meetingId"] },
+        { fields: ["urgency"] },
+        { fields: ["followUpRequired"] },
+        { fields: ["consultationCompletedAt"] },
       ],
     },
   )

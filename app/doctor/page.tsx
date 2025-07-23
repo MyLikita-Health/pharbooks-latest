@@ -1,13 +1,12 @@
 "use client"
-
-import { useState, useEffect } from "react"
 import DashboardLayout from "@/components/layout/dashboard-layout"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { useAuth } from "@/contexts/auth-context"
-import { apiClient } from "@/lib/api"
+import { dashboardApi, appointmentsApi, usersApi, prescriptionsApi, messagesApi } from "@/lib/api"
 import { useToast } from "@/hooks/use-toast"
+import { useApiData } from "@/hooks/use-api-data"
 import {
   Calendar,
   Users,
@@ -45,6 +44,7 @@ interface Appointment {
   status: string
   symptoms?: string
   Patient: {
+    id: string
     name: string
     phone?: string
   }
@@ -61,16 +61,15 @@ interface Patient {
 
 interface Prescription {
   id: string
-  dosage: string
-  frequency: string
   status: string
   createdAt: string
   Patient: {
     name: string
   }
-  Medication: {
+  Medications: Array<{
     name: string
-  }
+    dosage: string
+  }>
 }
 
 interface Message {
@@ -88,63 +87,58 @@ export default function DoctorDashboard() {
   const { user } = useAuth()
   const { toast } = useToast()
 
-  const [stats, setStats] = useState<DoctorStats>({
-    totalPatients: 0,
-    todayAppointments: 0,
-    upcomingAppointments: 0,
-    completedAppointments: 0,
-    activePrescriptions: 0,
-    totalConsultations: 0,
-    unreadMessages: 0,
-    rating: 0,
-    totalEarnings: 0,
+  // Fetch dashboard statistics
+  const {
+    data: stats,
+    loading: statsLoading,
+    refetch: refetchStats,
+  } = useApiData<DoctorStats>(() => dashboardApi.getDoctorStats(), [], {
+    onError: () => {
+      // Fallback stats if API fails
+      return {
+        totalPatients: 0,
+        todayAppointments: 0,
+        upcomingAppointments: 0,
+        completedAppointments: 0,
+        activePrescriptions: 0,
+        totalConsultations: 0,
+        unreadMessages: 0,
+        rating: 0,
+        totalEarnings: 0,
+      }
+    },
   })
 
-  const [todayAppointments, setTodayAppointments] = useState<Appointment[]>([])
-  const [recentPatients, setRecentPatients] = useState<Patient[]>([])
-  const [recentPrescriptions, setRecentPrescriptions] = useState<Prescription[]>([])
-  const [recentMessages, setRecentMessages] = useState<Message[]>([])
-  const [loading, setLoading] = useState(true)
-
-  useEffect(() => {
-    fetchDashboardData()
+  // Fetch today's appointments
+  const {
+    data: appointmentsData,
+    loading: appointmentsLoading,
+    refetch: refetchAppointments,
+  } = useApiData<{ appointments: Appointment[] }>(() => {
+    const today = new Date().toISOString().split("T")[0]
+    return appointmentsApi.getAppointments({ date: today, limit: 10 })
   }, [])
 
-  const fetchDashboardData = async () => {
-    try {
-      setLoading(true)
+  // Fetch recent patients
+  const {
+    data: patientsData,
+    loading: patientsLoading,
+    refetch: refetchPatients,
+  } = useApiData<{ users: Patient[] }>(() => usersApi.getUsers({ role: "patient", limit: 5, recent: true }), [])
 
-      // Fetch dashboard statistics
-      const statsResponse = await apiClient.get("/dashboard/doctor/stats")
-      setStats(statsResponse)
+  // Fetch recent prescriptions
+  const {
+    data: prescriptionsData,
+    loading: prescriptionsLoading,
+    refetch: refetchPrescriptions,
+  } = useApiData<{ prescriptions: Prescription[] }>(() => prescriptionsApi.getPrescriptions({ limit: 5 }), [])
 
-      // Fetch today's appointments
-      const today = new Date().toISOString().split("T")[0]
-      const appointmentsResponse = await apiClient.get(`/appointments?date=${today}&limit=10`)
-      setTodayAppointments(appointmentsResponse.appointments || [])
-
-      // Fetch recent patients
-      const patientsResponse = await apiClient.get("/patients?limit=5&recent=true")
-      setRecentPatients(patientsResponse.patients || [])
-
-      // Fetch recent prescriptions
-      const prescriptionsResponse = await apiClient.get("/prescriptions?limit=5")
-      setRecentPrescriptions(prescriptionsResponse.prescriptions || [])
-
-      // Fetch recent messages
-      const messagesResponse = await apiClient.get("/messages?limit=5")
-      setRecentMessages(messagesResponse.messages || [])
-    } catch (error) {
-      console.error("Failed to fetch dashboard data:", error)
-      toast({
-        title: "Error",
-        description: "Failed to load dashboard data. Please refresh the page.",
-        variant: "destructive",
-      })
-    } finally {
-      setLoading(false)
-    }
-  }
+  // Fetch recent messages
+  const {
+    data: messagesData,
+    loading: messagesLoading,
+    refetch: refetchMessages,
+  } = useApiData<{ messages: Message[] }>(() => messagesApi.getMessages({ limit: 5 }), [])
 
   const formatDate = (dateString: string) => {
     const date = new Date(dateString)
@@ -186,7 +180,15 @@ export default function DoctorDashboard() {
     }
   }
 
-  if (loading) {
+  const refreshAllData = () => {
+    refetchStats()
+    refetchAppointments()
+    refetchPatients()
+    refetchPrescriptions()
+    refetchMessages()
+  }
+
+  if (statsLoading) {
     return (
       <DashboardLayout>
         <div className="flex items-center justify-center min-h-[400px]">
@@ -199,22 +201,37 @@ export default function DoctorDashboard() {
     )
   }
 
+  const todayAppointments = appointmentsData?.appointments || []
+  const recentPatients = patientsData?.users || []
+  const recentPrescriptions = prescriptionsData?.prescriptions || []
+  const recentMessages = messagesData?.messages || []
+
   return (
     <DashboardLayout>
       <div className="space-y-6">
         {/* Welcome Section */}
         <div className="bg-gradient-to-r from-blue-600 to-blue-700 rounded-lg p-6 text-white">
-          <h1 className="text-2xl font-bold mb-2">Good morning, Dr. {user?.name}!</h1>
-          <p className="text-blue-100">You have {stats.todayAppointments} appointments scheduled for today.</p>
-          <div className="flex items-center space-x-4 mt-4">
-            <div className="flex items-center space-x-1">
-              <Star className="w-4 h-4 text-yellow-400 fill-current" />
-              <span className="text-sm">{stats.rating}/5.0 Rating</span>
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-2xl font-bold mb-2">Good morning, Dr. {user?.name}!</h1>
+              <p className="text-blue-100">
+                You have {stats?.todayAppointments || 0} appointments scheduled for today.
+              </p>
+              <div className="flex items-center space-x-4 mt-4">
+                <div className="flex items-center space-x-1">
+                  <Star className="w-4 h-4 text-yellow-400 fill-current" />
+                  <span className="text-sm">{stats?.rating || 0}/5.0 Rating</span>
+                </div>
+                <div className="flex items-center space-x-1">
+                  <TrendingUp className="w-4 h-4" />
+                  <span className="text-sm">${stats?.totalEarnings || 0} Total Earnings</span>
+                </div>
+              </div>
             </div>
-            <div className="flex items-center space-x-1">
-              <TrendingUp className="w-4 h-4" />
-              <span className="text-sm">${stats.totalEarnings} Total Earnings</span>
-            </div>
+            <Button onClick={refreshAllData} variant="outline" className="bg-white/10 border-white/20 text-white">
+              <ArrowRight className="w-4 h-4 mr-2" />
+              Refresh Data
+            </Button>
           </div>
         </div>
 
@@ -225,7 +242,7 @@ export default function DoctorDashboard() {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-gray-600">Total Patients</p>
-                  <p className="text-2xl font-bold">{stats.totalPatients}</p>
+                  <p className="text-2xl font-bold">{stats?.totalPatients || 0}</p>
                 </div>
                 <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
                   <Users className="w-5 h-5 text-blue-600" />
@@ -239,7 +256,7 @@ export default function DoctorDashboard() {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-gray-600">Today's Appointments</p>
-                  <p className="text-2xl font-bold text-green-600">{stats.todayAppointments}</p>
+                  <p className="text-2xl font-bold text-green-600">{stats?.todayAppointments || 0}</p>
                 </div>
                 <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center">
                   <Calendar className="w-5 h-5 text-green-600" />
@@ -253,7 +270,7 @@ export default function DoctorDashboard() {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-gray-600">Active Prescriptions</p>
-                  <p className="text-2xl font-bold text-purple-600">{stats.activePrescriptions}</p>
+                  <p className="text-2xl font-bold text-purple-600">{stats?.activePrescriptions || 0}</p>
                 </div>
                 <div className="w-10 h-10 bg-purple-100 rounded-full flex items-center justify-center">
                   <Pill className="w-5 h-5 text-purple-600" />
@@ -267,7 +284,7 @@ export default function DoctorDashboard() {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-gray-600">Unread Messages</p>
-                  <p className="text-2xl font-bold text-red-600">{stats.unreadMessages}</p>
+                  <p className="text-2xl font-bold text-red-600">{stats?.unreadMessages || 0}</p>
                 </div>
                 <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center">
                   <MessageSquare className="w-5 h-5 text-red-600" />
@@ -294,7 +311,11 @@ export default function DoctorDashboard() {
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
-                {todayAppointments.length === 0 ? (
+                {appointmentsLoading ? (
+                  <div className="flex items-center justify-center py-8">
+                    <Loader2 className="w-6 h-6 animate-spin" />
+                  </div>
+                ) : todayAppointments.length === 0 ? (
                   <div className="text-center py-8">
                     <Calendar className="w-12 h-12 text-gray-400 mx-auto mb-4" />
                     <p className="text-gray-600">No appointments scheduled for today</p>
@@ -350,7 +371,11 @@ export default function DoctorDashboard() {
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
-                {recentPatients.length === 0 ? (
+                {patientsLoading ? (
+                  <div className="flex items-center justify-center py-8">
+                    <Loader2 className="w-6 h-6 animate-spin" />
+                  </div>
+                ) : recentPatients.length === 0 ? (
                   <div className="text-center py-8">
                     <Users className="w-12 h-12 text-gray-400 mx-auto mb-4" />
                     <p className="text-gray-600">No recent patients</p>
@@ -403,7 +428,11 @@ export default function DoctorDashboard() {
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
-                {recentPrescriptions.length === 0 ? (
+                {prescriptionsLoading ? (
+                  <div className="flex items-center justify-center py-8">
+                    <Loader2 className="w-6 h-6 animate-spin" />
+                  </div>
+                ) : recentPrescriptions.length === 0 ? (
                   <div className="text-center py-8">
                     <Pill className="w-12 h-12 text-gray-400 mx-auto mb-4" />
                     <p className="text-gray-600">No recent prescriptions</p>
@@ -416,10 +445,12 @@ export default function DoctorDashboard() {
                           <Pill className="w-5 h-5 text-purple-600" />
                         </div>
                         <div>
-                          <h4 className="font-medium">{prescription.Medication.name}</h4>
+                          <h4 className="font-medium">
+                            {prescription.Medications?.[0]?.name || "Multiple medications"}
+                          </h4>
                           <p className="text-sm text-gray-600">For: {prescription.Patient.name}</p>
                           <p className="text-sm text-gray-500">
-                            {prescription.dosage} • {prescription.frequency}
+                            {prescription.Medications?.[0]?.dosage || ""} • {formatDate(prescription.createdAt)}
                           </p>
                         </div>
                       </div>
@@ -452,7 +483,11 @@ export default function DoctorDashboard() {
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
-                {recentMessages.length === 0 ? (
+                {messagesLoading ? (
+                  <div className="flex items-center justify-center py-8">
+                    <Loader2 className="w-6 h-6 animate-spin" />
+                  </div>
+                ) : recentMessages.length === 0 ? (
                   <div className="text-center py-8">
                     <MessageSquare className="w-12 h-12 text-gray-400 mx-auto mb-4" />
                     <p className="text-gray-600">No recent messages</p>
@@ -524,7 +559,7 @@ export default function DoctorDashboard() {
         </Card>
 
         {/* Alerts */}
-        {stats.todayAppointments > 0 && (
+        {(stats?.todayAppointments || 0) > 0 && (
           <Card className="border-blue-200 bg-blue-50">
             <CardContent className="p-6">
               <div className="flex items-center space-x-4">
@@ -534,8 +569,8 @@ export default function DoctorDashboard() {
                 <div className="flex-1">
                   <h3 className="font-semibold text-blue-900">Today's Schedule</h3>
                   <p className="text-blue-700">
-                    You have {stats.todayAppointments} appointment{stats.todayAppointments > 1 ? "s" : ""} scheduled for
-                    today. Make sure to review patient files before each consultation.
+                    You have {stats?.todayAppointments} appointment{(stats?.todayAppointments || 0) > 1 ? "s" : ""}{" "}
+                    scheduled for today. Make sure to review patient files before each consultation.
                   </p>
                 </div>
                 <Link href="/doctor/schedule">

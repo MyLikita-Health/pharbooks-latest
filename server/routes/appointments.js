@@ -3,7 +3,19 @@ const { Appointment, User } = require("../models")
 const { authenticateToken, authorizeRoles } = require("../middleware/auth")
 const { validateAppointment } = require("../middleware/validation")
 const { Op } = require("sequelize")
+const crypto = require("crypto")
 const router = express.Router()
+
+// Generate unique meeting ID
+const generateMeetingId = () => {
+  return crypto.randomBytes(16).toString("hex")
+}
+
+// Generate meeting URL
+const generateMeetingUrl = (meetingId) => {
+  const baseUrl = process.env.FRONTEND_URL || "http://localhost:3000"
+  return `${baseUrl}/meeting/${meetingId}`
+}
 
 // Get appointments (role-based)
 router.get("/", authenticateToken, async (req, res) => {
@@ -184,6 +196,14 @@ router.post("/doctor-create", authenticateToken, authorizeRoles(["doctor"]), asy
       return res.status(409).json({ message: "Time slot not available" })
     }
 
+    // Generate meeting details for video appointments
+    let meetingId = null
+    let meetingUrl = null
+    if (type === "video") {
+      meetingId = generateMeetingId()
+      meetingUrl = generateMeetingUrl(meetingId)
+    }
+
     // Create appointment
     const appointment = await Appointment.create({
       patientId,
@@ -195,6 +215,8 @@ router.post("/doctor-create", authenticateToken, authorizeRoles(["doctor"]), asy
       duration: duration || 30,
       fee: fee || 75.0,
       status: "confirmed", // Doctor-created appointments are automatically confirmed
+      meetingId,
+      meetingUrl,
     })
 
     // Fetch appointment with related data
@@ -244,6 +266,12 @@ router.patch("/:id/status", authenticateToken, async (req, res) => {
       updateData.cancelledBy = userId
     }
 
+    // Generate meeting details when confirming video appointments
+    if (status === "confirmed" && appointment.type === "video" && !appointment.meetingId) {
+      updateData.meetingId = generateMeetingId()
+      updateData.meetingUrl = generateMeetingUrl(updateData.meetingId)
+    }
+
     await appointment.update(updateData)
 
     // Fetch updated appointment with related data
@@ -268,7 +296,20 @@ router.patch("/:id/status", authenticateToken, async (req, res) => {
 router.patch("/:id", authenticateToken, authorizeRoles(["doctor"]), async (req, res) => {
   try {
     const { id } = req.params
-    const { diagnosis, notes, duration } = req.body
+    const {
+      diagnosis,
+      notes,
+      duration,
+      consultationNotes,
+      urgency,
+      specialInstructions,
+      additionalNotes,
+      followUpRequired,
+      followUpDays,
+      followUpDate,
+      consultationDuration,
+      status,
+    } = req.body
     const { userId } = req.user
 
     const appointment = await Appointment.findOne({
@@ -283,13 +324,31 @@ router.patch("/:id", authenticateToken, authorizeRoles(["doctor"]), async (req, 
     if (diagnosis !== undefined) updateData.diagnosis = diagnosis
     if (notes !== undefined) updateData.notes = notes
     if (duration !== undefined) updateData.duration = duration
+    if (consultationNotes !== undefined) updateData.consultationNotes = consultationNotes
+    if (urgency !== undefined) updateData.urgency = urgency
+    if (specialInstructions !== undefined) updateData.specialInstructions = specialInstructions
+    if (additionalNotes !== undefined) updateData.additionalNotes = additionalNotes
+    if (followUpRequired !== undefined) updateData.followUpRequired = followUpRequired
+    if (followUpDays !== undefined) updateData.followUpDays = followUpDays
+    if (followUpDate !== undefined) updateData.followUpDate = followUpDate
+    if (consultationDuration !== undefined) updateData.consultationDuration = consultationDuration
+    if (status !== undefined) updateData.status = status
+
+    // Set consultation completion timestamp when completing
+    if (status === "completed" && consultationNotes) {
+      updateData.consultationCompletedAt = new Date()
+    }
 
     await appointment.update(updateData)
 
     // Fetch updated appointment with related data
     const updatedAppointment = await Appointment.findByPk(id, {
       include: [
-        { model: User, as: "Patient", attributes: ["id", "name", "phone"] },
+        {
+          model: User,
+          as: "Patient",
+          attributes: ["id", "name", "phone", "email", "dateOfBirth", "gender", "medicalHistory", "allergies"],
+        },
         { model: User, as: "Doctor", attributes: ["id", "name", "specialization"] },
       ],
     })
@@ -301,6 +360,124 @@ router.patch("/:id", authenticateToken, authorizeRoles(["doctor"]), async (req, 
   } catch (error) {
     console.error("Update appointment error:", error)
     res.status(500).json({ message: "Failed to update appointment" })
+  }
+})
+
+// Complete consultation with post-consultation data
+router.patch("/:id/complete-consultation", authenticateToken, authorizeRoles(["doctor"]), async (req, res) => {
+  try {
+    const { id } = req.params
+    const {
+      consultationNotes,
+      diagnosis,
+      urgency,
+      specialInstructions,
+      additionalNotes,
+      followUpRequired,
+      followUpDays,
+      consultationDuration,
+    } = req.body
+    const { userId } = req.user
+
+    // Validate required fields
+    if (!consultationNotes || consultationNotes.trim() === "") {
+      return res.status(400).json({ message: "Consultation notes are required" })
+    }
+
+    const appointment = await Appointment.findOne({
+      where: { id, doctorId: userId },
+    })
+
+    if (!appointment) {
+      return res.status(404).json({ message: "Appointment not found" })
+    }
+
+    // Calculate follow-up date
+    const followUpDate =
+      followUpRequired && followUpDays
+        ? new Date(Date.now() + Number.parseInt(followUpDays) * 24 * 60 * 60 * 1000)
+        : null
+
+    const updateData = {
+      status: "completed",
+      consultationNotes,
+      diagnosis,
+      urgency: urgency || "medium",
+      specialInstructions,
+      additionalNotes,
+      followUpRequired: followUpRequired || false,
+      followUpDays: followUpRequired ? Number.parseInt(followUpDays) : null,
+      followUpDate,
+      consultationDuration,
+      consultationCompletedAt: new Date(),
+    }
+
+    await appointment.update(updateData)
+
+    // Fetch updated appointment with related data
+    const updatedAppointment = await Appointment.findByPk(id, {
+      include: [
+        { model: User, as: "Patient", attributes: ["id", "name", "phone", "email"] },
+        { model: User, as: "Doctor", attributes: ["id", "name", "specialization"] },
+      ],
+    })
+
+    res.json({
+      message: "Consultation completed successfully",
+      appointment: updatedAppointment,
+    })
+  } catch (error) {
+    console.error("Complete consultation error:", error)
+    res.status(500).json({ message: "Failed to complete consultation" })
+  }
+})
+
+// Get meeting details
+router.get("/:id/meeting", authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params
+    const { role, userId } = req.user
+
+    const whereClause = { id }
+
+    // Authorization check
+    if (role === "patient") {
+      whereClause.patientId = userId
+    } else if (role === "doctor") {
+      whereClause.doctorId = userId
+    }
+
+    const appointment = await Appointment.findOne({
+      where: whereClause,
+      include: [
+        { model: User, as: "Patient", attributes: ["id", "name", "phone"] },
+        { model: User, as: "Doctor", attributes: ["id", "name", "specialization"] },
+      ],
+    })
+
+    if (!appointment) {
+      return res.status(404).json({ message: "Appointment not found" })
+    }
+
+    if (!appointment.meetingId) {
+      return res.status(400).json({ message: "No meeting link available for this appointment" })
+    }
+
+    res.json({
+      meetingId: appointment.meetingId,
+      meetingUrl: appointment.meetingUrl,
+      appointment: {
+        id: appointment.id,
+        status: appointment.status,
+        type: appointment.type,
+        appointmentDate: appointment.appointmentDate,
+        Patient: appointment.Patient,
+        Doctor: appointment.Doctor,
+      },
+    })
+  } catch (error) {
+    console.error("Get meeting error:", error)
+    res.status(500).json({ message: "Failed to fetch meeting details" })
   }
 })
 

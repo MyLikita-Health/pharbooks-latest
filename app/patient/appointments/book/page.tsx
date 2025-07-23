@@ -2,7 +2,7 @@
 
 import type React from "react"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import DashboardLayout from "@/components/layout/dashboard-layout"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -11,9 +11,19 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
-import { Clock, User, Stethoscope, ArrowLeft } from "lucide-react"
+import { Clock, User, Stethoscope, ArrowLeft, Loader2 } from "lucide-react"
 import Link from "next/link"
 import { useToast } from "@/hooks/use-toast"
+import { apiClient } from "@/lib/api"
+
+// Define the Doctor type
+interface Doctor {
+  id: string
+  name: string
+  specialization: string
+  experience: string
+  rating: string
+}
 
 export default function BookAppointment() {
   const [selectedDoctor, setSelectedDoctor] = useState("")
@@ -22,16 +32,12 @@ export default function BookAppointment() {
   const [appointmentType, setAppointmentType] = useState("")
   const [symptoms, setSymptoms] = useState("")
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [doctors, setDoctors] = useState<Doctor[]>([])
+  const [isLoadingDoctors, setIsLoadingDoctors] = useState(true)
+  const [doctorsError, setDoctorsError] = useState<string | null>(null)
 
   const router = useRouter()
   const { toast } = useToast()
-
-  const doctors = [
-    { id: "1", name: "Dr. Sarah Smith", specialization: "Cardiology", experience: "15 years", rating: "4.9" },
-    { id: "2", name: "Dr. Michael Johnson", specialization: "General Medicine", experience: "12 years", rating: "4.8" },
-    { id: "3", name: "Dr. Emily Davis", specialization: "Dermatology", experience: "10 years", rating: "4.7" },
-    { id: "4", name: "Dr. Robert Wilson", specialization: "Orthopedics", experience: "18 years", rating: "4.9" },
-  ]
 
   const timeSlots = [
     "09:00 AM",
@@ -48,22 +54,95 @@ export default function BookAppointment() {
     "04:30 PM",
   ]
 
+
+  const getDoctors = async () => {
+    try {
+      setIsLoadingDoctors(true)
+      setDoctorsError(null)
+      
+      const response = await apiClient.get("/users/doctors")
+      
+    
+      const doctorsData = response.data || response
+      
+      if (Array.isArray(doctorsData)) {
+        setDoctors(doctorsData)
+      } else if (doctorsData && Array.isArray(doctorsData.doctors)) {
+        setDoctors(doctorsData.doctors)
+      } else {
+        throw new Error("Invalid response format")
+      }
+      
+    } catch (error) {
+      console.error("Error fetching doctors:", error)
+      setDoctorsError("Failed to load doctors. Please try again.")
+      
+      // Fallback to static data in case of error
+      // const fallbackDoctors: Doctor[] = [
+      //   { id: "1", name: "Dr. Sarah Smith", specialization: "Cardiology", experience: "15 years", rating: "4.9" },
+      //   { id: "2", name: "Dr. Michael Johnson", specialization: "General Medicine", experience: "12 years", rating: "4.8" },
+      //   { id: "3", name: "Dr. Emily Davis", specialization: "Dermatology", experience: "10 years", rating: "4.7" },
+      //   { id: "4", name: "Dr. Robert Wilson", specialization: "Orthopedics", experience: "18 years", rating: "4.9" },
+      // ]
+      // setDoctors(fallbackDoctors)
+      
+      toast({
+        title: "Warning",
+        description: "Using cached doctor data. Some information may be outdated.",
+        variant: "destructive",
+      })
+    } finally {
+      setIsLoadingDoctors(false)
+    }
+  }
+
+  // Fetch doctors on component mount
+  useEffect(() => {
+    getDoctors()
+  }, [])
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setIsSubmitting(true)
 
-    // Simulate API call
-    await new Promise((resolve) => setTimeout(resolve, 2000))
+    try {
+      // Prepare appointment data
+      const appointmentData = {
+        doctorId: selectedDoctor,
+         appointmentDate: selectedDate,
+        time: selectedTime,
+        type: appointmentType,
+        symptoms: symptoms,
+      }
 
-    toast({
-      title: "Appointment Booked!",
-      description: "Your appointment has been successfully scheduled. You'll receive a confirmation email shortly.",
-    })
+      // Make API call to book appointment
+      const response = await apiClient.post("/appointments", appointmentData)
+      
+      toast({
+        title: "Appointment Booked!",
+        description: "Your appointment has been successfully scheduled. You'll receive a confirmation email shortly.",
+      })
 
-    router.push("/patient/appointments")
+      router.push("/patient/appointments")
+      
+    } catch (error) {
+      console.error("Error booking appointment:", error)
+      toast({
+        title: "Booking Failed",
+        description: "There was an error booking your appointment. Please try again.",
+        variant: "destructive",
+      })
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
   const selectedDoctorInfo = doctors.find((doc) => doc.id === selectedDoctor)
+
+  // Retry function for failed doctor loading
+  const retryLoadingDoctors = () => {
+    getDoctors()
+  }
 
   return (
     <DashboardLayout>
@@ -95,30 +174,51 @@ export default function BookAppointment() {
                   {/* Doctor Selection */}
                   <div className="space-y-2">
                     <Label htmlFor="doctor">Select Doctor</Label>
-                    <Select value={selectedDoctor} onValueChange={setSelectedDoctor}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Choose a doctor" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {doctors.map((doctor) => (
-                          <SelectItem key={doctor.id} value={doctor.id}>
-                            <div className="flex items-center space-x-2">
-                              <Stethoscope className="w-4 h-4" />
-                              <span>
-                                {doctor.name} - {doctor.specialization}
-                              </span>
-                            </div>
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    {isLoadingDoctors ? (
+                      <div className="flex items-center space-x-2 p-3 border rounded-md">
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        <span className="text-sm text-gray-500">Loading doctors...</span>
+                      </div>
+                    ) : doctorsError ? (
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between p-3 border rounded-md bg-red-50">
+                          <span className="text-sm text-red-600">{doctorsError}</span>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={retryLoadingDoctors}
+                          >
+                            Retry
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <Select value={selectedDoctor} onValueChange={setSelectedDoctor}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Choose a doctor" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {doctors.map((doctor) => (
+                            <SelectItem key={doctor.id} value={doctor.id}>
+                              <div className="flex items-center space-x-2">
+                                <Stethoscope className="w-4 h-4" />
+                                <span>
+                                  {doctor.name} - {doctor.specialization}
+                                </span>
+                              </div>
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    )}
                   </div>
 
                   {/* Date Selection */}
                   <div className="space-y-2">
-                    <Label htmlFor="date">Preferred Date</Label>
+                    <Label htmlFor=" appointmentDate">Preferred Date</Label>
                     <Input
-                      id="date"
+                      id=" appointmentDate"
                       type="date"
                       value={selectedDate}
                       onChange={(e) => setSelectedDate(e.target.value)}
@@ -177,9 +277,16 @@ export default function BookAppointment() {
                   <Button
                     type="submit"
                     className="w-full bg-blue-600 hover:bg-blue-700"
-                    disabled={isSubmitting || !selectedDoctor || !selectedDate || !selectedTime || !appointmentType}
+                    disabled={isSubmitting || !selectedDoctor || !selectedDate || !selectedTime || !appointmentType || isLoadingDoctors}
                   >
-                    {isSubmitting ? "Booking Appointment..." : "Book Appointment"}
+                    {isSubmitting ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Booking Appointment...
+                      </>
+                    ) : (
+                      "Book Appointment"
+                    )}
                   </Button>
                 </form>
               </CardContent>
